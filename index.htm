@@ -1,120 +1,154 @@
 <!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>K-POP 가수 추천(태산)</title>
-  <style>
-    body{font-family:system-ui,Apple SD Gothic Neo,Segoe UI,Roboto,맑은 고딕,sans-serif;max-width:900px;margin:24px auto;padding:0 16px}
-    h1{margin-bottom:8px}
-    .section{border:1px solid #e5e5e5;border-radius:16px;padding:16px;margin:16px 0}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    .pill{background:#f2f2f2;border-radius:999px;padding:2px 10px;font-size:12px}
-    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-    .card{border:1px solid #ddd;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:8px}
-    .card img{width:100%;height:200px;object-fit:cover;border-radius:10px;margin-bottom:8px}
-    .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
-    .btn:hover{background:#f8f8f8}
-  </style>
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>쫀통 진단 (CSV 연동 · 직렬 10문항)</title>
+<link rel="preconnect" href="https://unpkg.com">
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<style>
+  body{font-family:system-ui,Apple SD Gothic Neo,Segoe UI,Roboto,맑은 고딕,sans-serif;max-width:860px;margin:24px auto;padding:0 14px}
+  h1{margin:0 0 8px}
+  .muted{color:#667085;font-size:12px}
+  .q{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:10px 0;background:#fff}
+  .q h3{margin:0 0 8px;font-size:15px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .opt{display:inline-flex;align-items:center;gap:6px;border:1px solid #d0d5dd;border-radius:999px;padding:6px 10px;background:#fafbfc;cursor:pointer}
+  .opt input{accent-color:#2f6feb}
+  .foot{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  button{padding:10px 14px;border:1px solid #d0d5dd;border-radius:10px;background:#fff;cursor:pointer}
+  .result{border:1px dashed #d0d5dd;border-radius:10px;padding:12px;margin-top:12px;display:none}
+  .pill{display:inline-block;background:#f2f4f7;border:1px solid #e4e7ec;border-radius:999px;padding:2px 10px;font-size:12px;margin-left:6px}
+  .err{color:#b42318}
+</style>
 </head>
 <body>
-  <h1>K-POP 가수 추천(태산)</h1>
-  <div class="section">
-    <div><b>당신의 선호도를 입력하세요 (1~5)</b></div>
-    <div class="row" id="pref-inputs"></div>
-    <button class="btn" id="submit">추천 받기</button>
-  </div>
+<h1>쫀통 진단</h1>
+<div class="muted">10문항을 차례대로 1~4점 중 하나로 선택하세요. (CSV: <code>data/questions.csv</code>, <code>data/types.csv</code>)</div>
 
-  <section id="result" class="section" style="display:none;">
-    <div class="row" style="justify-content:space-between;">
-      <b>추천된 가수 Top 3</b>
-      <button class="btn" id="reset">← 다시 입력하기</button>
-    </div>
-    <div style="height:8px"></div>
-    <div class="grid" id="reco"></div>
-    <div style="margin-top:12px; text-align:center; font-size:14px; color:#555;">
-      입력한 6가지 선호도를 바탕으로 가장 잘 맞는 가수를 추천합니다.
-    </div>
-  </section>
+<div id="status" class="muted" style="margin:8px 0;">불러오는 중…</div>
+
+<div id="list"></div>
+
+<div class="foot">
+  <button id="btnReset" type="button">초기화</button>
+  <button id="btnSubmit" type="button">결과 보기</button>
+</div>
+
+<div id="result" class="result"></div>
 
 <script>
-let ITEMS=[]; // {id, name, vec}
-const FEATURES=["힙합/퍼포먼스","섹시","청량/밝음","몽환/감성","밴드","발라드"];
+const DB={questions:[], axes:{}, map:[]};
 
-function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+function byNum(v,d=0){ const n=Number(v); return Number.isFinite(n)?n:d; }
+function truth(v){ return String(v).trim()==='1' || /^true$/i.test(String(v)); }
+function esc(s){ return String(s).replace(/[&<>\"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;' }[m])); }
 
-function imgOnError(img){
-  img.onerror=null;
-  img.src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 300'><rect width='100%' height='100%' fill='%23f3f4f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui' font-size='18' fill='%23666'>이미지 없음</text></svg>`;
+function renderSerial10(){
+  const list=document.getElementById('list'); list.innerHTML='';
+  // method 1~5, then attitude 1~5 (CSV의 order 사용)
+  const M = DB.questions.filter(q=>q.axis==='method' && q.active).sort((a,b)=>a.order-b.order);
+  const A = DB.questions.filter(q=>q.axis==='attitude' && q.active).sort((a,b)=>a.order-b.order);
+  const all = [...M, ...A]; // 직렬 10문항
+
+  let idx=0;
+  for(const q of all){
+    idx++;
+    const name = `q${idx}`;
+    const radios = [1,2,3,4].map(v=>(
+      `<label class="opt"><input type="radio" name="${name}" value="${v}">${v}점</label>`
+    )).join('');
+    const block = document.createElement('div');
+    block.className='q';
+    block.dataset.axis = q.axis;
+    block.dataset.min = q.min_score;
+    block.dataset.max = q.max_score;
+    block.dataset.rev = q.reverse?1:0;
+    block.innerHTML = `<h3>${idx}. ${esc(q.question)}</h3><div class="row">${radios}</div>`;
+    list.appendChild(block);
+  }
+}
+
+function compute(){
+  const mCfg=DB.axes['method'], aCfg=DB.axes['attitude'];
+  if(!mCfg||!aCfg) return {error:'축 설정이 없습니다.'};
+
+  const qs = Array.from(document.querySelectorAll('.q'));
+  let mSum=0,aSum=0,miss=0;
+  for(const q of qs){
+    const sel = q.querySelector('input[type=radio]:checked');
+    if(!sel){ miss++; continue; }
+    const raw = Number(sel.value)||0;
+    const min = byNum(q.dataset.min,1), max = byNum(q.dataset.max,4);
+    const rev = q.dataset.rev==='1';
+    const v = rev? (min+max-raw) : raw; // 역채점 대응
+    if(q.dataset.axis==='method') mSum+=v; else aSum+=v;
+  }
+  if(miss>0) return {error:`미응답 ${miss}개 있음`};
+
+  const hi=(cfg,sum)=>{ switch(cfg.op_high){case '>=':return sum>=cfg.threshold;case '>':return sum>cfg.threshold;case '<=':return sum<=cfg.threshold;case '<':return sum<cfg.threshold;case '==':return sum==cfg.threshold;default:return sum>=cfg.threshold;} };
+  const mLabel = hi(mCfg,mSum)?mCfg.label_high:mCfg.label_low;
+  const aLabel = hi(aCfg,aSum)?aCfg.label_high:aCfg.label_low;
+  const found = DB.map.find(t=>String(t.method_label)===String(mLabel) && String(t.attitude_label)===String(aLabel));
+  if(!found) return {error:'유형 매핑을 찾을 수 없습니다.'};
+  return {mSum,aSum,mLabel,aLabel,type:found};
+}
+
+function show(res){
+  const box=document.getElementById('result'); box.style.display='block';
+  if(res.error){ box.innerHTML = `<div class="err"><b>오류:</b> ${esc(res.error)}</div>`; return; }
+  const t=res.type;
+  box.innerHTML = `<div><b>결과:</b> ${esc(t.type_name)} <span class="pill">${esc(t.type_code)}</span></div>
+    <div class="muted">합계 — 방법 ${res.mSum} / 태도 ${res.aSum}</div>
+    <div style="margin-top:6px">${esc(t.description)}</div>
+    <div class="muted" style="margin-top:6px">판정: [방법] ${esc(res.mLabel)} · [태도] ${esc(res.aLabel)}</div>`;
 }
 
 async function loadCSV(){
-  const url = 'data/KPOP가수데이터.csv' + `?v=${Date.now()}`;
-  const res = await fetch(url);
-  const text = await res.text();
-  const parsed = Papa.parse(text, {skipEmptyLines:true});
-  const rows = parsed.data;
-  if(rows.length<2) return;
+  const s = document.getElementById('status');
+  try{
+    const [rq, rt] = await Promise.all([
+      fetch('data/questions.csv?v='+Date.now()),
+      fetch('data/types.csv?v='+Date.now())
+    ]);
+    if(!rq.ok || !rt.ok){
+      s.textContent = `로드 실패 — ${!rq.ok?`questions:${rq.status} `:''}${!rt.ok?`types:${rt.status} `:''}`;
+      return;
+    }
+    const [tq, tt] = await Promise.all([rq.text(), rt.text()]);
+    // header:true 로 바로 객체 변환
+    const Q = Papa.parse(tq, {header:true, skipEmptyLines:true}).data;
+    const T = Papa.parse(tt, {header:true, skipEmptyLines:true}).data;
 
-  ITEMS = [];
-  const header = rows[0];
-  for(let i=1;i<rows.length;i++){
-    const r = rows[i];
-    if(!r || r.length<8) continue;
-    const id = String(r[0]).trim();
-    const name = r[1];
-    const vec = r.slice(2).map(v => Number(v||0));
-    ITEMS.push({id, name, vec});
+    DB.questions = Q.map(r=>({
+      qid:r.qid, axis:r.axis, order:byNum(r.order,0), question:r.question,
+      min_score:byNum(r.min_score,1), max_score:byNum(r.max_score,4),
+      weight:byNum(r.weight,1), reverse:truth(r.reverse), active:truth(r.active)
+    }));
+    DB.axes = {};
+    T.filter(r=>r.record_type==='axis').forEach(r=>{
+      DB.axes[r.axis] = { threshold: byNum(r.threshold,13), op_high:(r.op_high||'>=').trim(),
+                          label_high:r.label_high, label_low:r.label_low };
+    });
+    DB.map = T.filter(r=>r.record_type==='type').map(r=>({
+      method_label:r.method_label, attitude_label:r.attitude_label,
+      type_code:r.type_code, type_name:r.type_name, description:r.description
+    }));
+
+    renderSerial10();
+    s.textContent = '로드 완료';
+  }catch(e){
+    s.textContent = '예외: '+ e.message;
   }
 }
 
-function buildPrefInputs(){
-  const wrap=document.getElementById('pref-inputs');
-  wrap.innerHTML = FEATURES.map((f,idx)=>{
-    return `<label>${f}: <input type="number" id="pref-${idx}" min="1" max="5" value="3" style="width:50px"></label>`;
-  }).join(' ');
-}
-
-function euclidean(a,b){
-  let sum=0; for(let i=0;i<a.length;i++){ const d=(a[i]-b[i]); sum+=d*d; }
-  return Math.sqrt(sum);
-}
-
-function recommend(){
-  const prefs = FEATURES.map((_,i)=> Number(document.getElementById('pref-'+i).value||0));
-  const list=[];
-  for(let i=0;i<ITEMS.length;i++){
-    list.push({i, dist: euclidean(prefs, ITEMS[i].vec)});
-  }
-  list.sort((a,b)=>a.dist-b.dist);
-  return list.slice(0,3);
-}
-
-function renderRecommendations(top){
-  const wrap=document.getElementById('reco');
-  wrap.innerHTML=top.map((t,rank)=>{
-    const it=ITEMS[t.i];
-    return `<div class="card">
-      <img src="img/${it.id}.jpg" alt="${escapeHtml(it.name)}" onerror="imgOnError(this)">
-      <div><b>${rank+1}. ${escapeHtml(it.name)}</b></div>
-      <div class="pill">거리 ${Math.round(t.dist*100)/100}</div>
-    </div>`;
-  }).join('');
-}
-
-document.getElementById('submit').addEventListener('click',()=>{
-  const top = recommend();
-  renderRecommendations(top);
-  document.getElementById('result').style.display='block';
+document.getElementById('btnReset').addEventListener('click', ()=>{
+  document.querySelectorAll('input[type=radio]:checked').forEach(el=>el.checked=false);
+  const box=document.getElementById('result'); box.style.display='none'; box.innerHTML='';
 });
-
-document.getElementById('reset').addEventListener('click',()=>{
-  document.getElementById('result').style.display='none';
-});
+document.getElementById('btnSubmit').addEventListener('click', ()=> show(compute()));
 
 loadCSV();
-buildPrefInputs();
 </script>
 </body>
 </html>
