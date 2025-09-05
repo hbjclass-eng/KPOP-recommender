@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>K-POP 가수 추천(태산)</title>
+  <style>
+    :root{ --card:#f7f7fb; --stroke:#c9c9d4; --accent:#5468ff; }
+    body{font-family:system-ui,Apple SD Gothic Neo,Segoe UI,Roboto,맑은 고딕,sans-serif;max-width:900px;margin:24px auto;padding:0 16px}
+    h1{margin-bottom:8px}
+    .section{border:1px solid #ececf2;border-radius:16px;padding:16px;margin:16px 0;background:#fff}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .pill{background:#f2f2f2;border-radius:999px;padding:2px 10px;font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+    .card{border:1px solid #ddd;border-radius:14px;overflow:hidden;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:8px}
+    .card img{width:100%;height:200px;object-fit:cover;border-radius:10px;margin-bottom:8px}
+    .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #ddd;background:#fff;border-radius:10px;padding:8px 12px;cursor:pointer}
+    .btn:hover{background:#f8f8f8}
+
+    /* ★ 별점 컴포넌트 */
+    .qcard{background:var(--card);border:1px solid #ececf2;border-radius:14px;padding:14px 16px;flex:1 1 100%;}
+    .qhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:#333}
+    .qname{font-weight:600}
+    .qscale{display:flex;justify-content:space-between;gap:12px;color:#6b7280;font-size:12px;padding:0 4px}
+    .rating{display:flex;flex-direction:row-reverse;justify-content:space-between;gap:6px;margin-top:6px}
+    .rating input{position:absolute;opacity:0;pointer-events:none}
+    .rating label{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;transition:transform .06s ease}
+    .rating label:hover{transform:translateY(-1px)}
+    .rating label svg{width:22px;height:22px;stroke:var(--stroke);fill:none;stroke-width:1.8}
+
+    /* 기본: 체크된 값까지 채움 */
+    .rating input:checked ~ label svg{fill:#ffd54d;stroke:#f4b400}
+
+    /* 호버 중에는 체크 채움 무시하고, 호버 위치까지만 미리보기 */
+    .rating:hover label svg{fill:none;stroke:var(--stroke)}
+    .rating:hover label:hover svg,
+    .rating:hover label:hover ~ label svg{fill:#ffe07a;stroke:#f7c948}
+
+    @media (max-width:720px){ .rating label{width:32px;height:32px} .rating label svg{width:20px;height:20px} } .rating svg{width:20px;height:20px} }
+  </style>
+  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <h1>K-POP 가수 추천(태산)</h1>
+  <div class="section">
+    <div style="margin-bottom:10px"><b>당신의 선호도를 입력하세요 (1~5)</b></div>
+    <div id="pref-wrap" class="row" style="flex-direction:column;gap:12px"></div>
+    <button class="btn" id="submit">추천 받기</button>
+  </div>
+
+  <section id="result" class="section" style="display:none;">
+    <div class="row" style="justify-content:space-between;">
+      <b>추천된 가수 Top 3</b>
+      <button class="btn" id="reset">← 다시 입력하기</button>
+    </div>
+    <div style="height:8px"></div>
+    <div class="grid" id="reco"></div>
+    <div style="margin-top:12px; text-align:center; font-size:14px; color:#555;">
+      입력한 6가지 선호도를 바탕으로 가장 잘 맞는 가수를 추천합니다.
+    </div>
+  </section>
+
+<script>
+let ITEMS=[]; // {id, name, vec}
+const FEATURES=["힙합/퍼포먼스","섹시","청량/밝음","몽환/감성","밴드","발라드"];
+
+function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#039;'); }
+
+function starSVG(){return `<?xml version="1.0"?><svg viewBox='0 0 24 24' aria-hidden='true'><path d='M12 2l2.95 6.16 6.79.59-5.12 4.39 1.55 6.69L12 16.9 5.83 19.83l1.55-6.69L2.26 8.75l6.79-.59L12 2z'/></svg>`}
+
+function starGroupHTML(label, idx){
+  const numbers = `<div class="qscale">${[1,2,3,4,5].map(n=>`<span>${n}</span>`).join('')}</div>`;
+  const inputs = [5,4,3,2,1].map(v=>`
+    <input type="radio" id="pref-${idx}-${v}" name="pref-${idx}" value="${v}" ${v===3? 'checked':''}>
+    <label for="pref-${idx}-${v}" title="${v}점">${starSVG()}</label>
+  `).join('');
+  return `<div class="qcard">
+    <div class="qhead"><span class="qname">${escapeHtml(label)}</span></div>
+    ${numbers}
+    <div class="rating" role="radiogroup" aria-label="${escapeHtml(label)} 선호도">
+      ${inputs}
+    </div>
+  </div>`;
+}
+
+function buildPrefInputs(){
+  const wrap=document.getElementById('pref-wrap');
+  wrap.innerHTML = FEATURES.map((f,idx)=> starGroupHTML(f, idx)).join('');
+}
+
+function imgOnError(img){
+  img.onerror=null;
+  img.src = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 300'><rect width='100%' height='100%' fill='%23f3f4f6'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-family='system-ui' font-size='18' fill='%23666'>이미지 없음</text></svg>`;
+}
+
+async function loadCSV(){
+  const url = 'data/KPOP가수데이터.csv' + `?v=${Date.now()}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  const parsed = Papa.parse(text, {skipEmptyLines:true});
+  const rows = parsed.data;
+  if(rows.length<2) return;
+
+  ITEMS = [];
+  for(let i=1;i<rows.length;i++){
+    const r = rows[i];
+    if(!r || r.length<8) continue;
+    const id = String(r[0]).trim();
+    const name = r[1];
+    const vec = r.slice(2).map(v => Number(v||0));
+    ITEMS.push({id, name, vec});
+  }
+}
+
+function euclidean(a,b){
+  let sum=0; for(let i=0;i<a.length;i++){ const d=(a[i]-b[i]); sum+=d*d; }
+  return Math.sqrt(sum);
+}
+
+function getPrefs(){
+  return FEATURES.map((_,i)=>{
+    const el = document.querySelector(`input[name="pref-${i}"]:checked`);
+    return el ? Number(el.value) : 3;
+  });
+}
+
+function recommend(){
+  const prefs = getPrefs();
+  const list=[];
+  for(let i=0;i<ITEMS.length;i++){
+    list.push({i, dist: euclidean(prefs, ITEMS[i].vec)});
+  }
+  list.sort((a,b)=>a.dist-b.dist);
+  return list.slice(0,3);
+}
+
+function renderRecommendations(top){
+  const wrap=document.getElementById('reco');
+  wrap.innerHTML=top.map((t,rank)=>{
+    const it=ITEMS[t.i];
+    return `<div class="card">
+      <img src="img/${it.id}.jpg" alt="${escapeHtml(it.name)}" onerror="imgOnError(this)">
+      <div><b>${rank+1}. ${escapeHtml(it.name)}</b></div>
+      <div class="pill">거리 ${Math.round(t.dist*100)/100}</div>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('submit').addEventListener('click',()=>{
+  const top = recommend();
+  renderRecommendations(top);
+  document.getElementById('result').style.display='block';
+});
+
+document.getElementById('reset').addEventListener('click',()=>{
+  document.getElementById('result').style.display='none';
+});
+
+loadCSV();
+buildPrefInputs();
+</script>
+</body>
+</html>
